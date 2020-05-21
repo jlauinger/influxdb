@@ -400,6 +400,7 @@ const (
 	timeColIdx          = 2
 	windowedValueColIdx = 2
 	valueColIdx         = 3
+	maxWindowBufferSize = 1024
 )
 
 func determineTableColsForWindowAggregate(tags models.Tags, typ flux.ColType) ([]flux.ColMeta, [][]byte) {

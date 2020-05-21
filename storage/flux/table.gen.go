@@ -9,6 +9,7 @@ package storageflux
 import (
 	"sync"
 
+	"github.com/apache/arrow/go/arrow/array"
 	"github.com/influxdata/flux"
 	"github.com/influxdata/flux/arrow"
 	"github.com/influxdata/flux/execute"
@@ -164,6 +165,146 @@ func (t *floatWindowTable) advance() bool {
 	if t.idxInArr == t.arr.Len() {
 		t.arr = nil
 	}
+	return true
+}
+
+type floatCompleteWindowTable struct {
+	floatTable
+	windowEvery int64
+	ts          int64
+
+	// Buffered state from the underlying cursor.
+	timestamps []int64
+	values     []float64
+	i          int
+	done       bool
+}
+
+func newFloatCompleteWindowTable(
+	done chan struct{},
+	cur cursors.FloatArrayCursor,
+	bounds execute.Bounds,
+	every int64,
+	key flux.GroupKey,
+	cols []flux.ColMeta,
+	tags models.Tags,
+	defs [][]byte,
+	cache *tagsCache,
+	alloc *memory.Allocator,
+) *floatCompleteWindowTable {
+	start := int64(bounds.Start)
+	t := &floatCompleteWindowTable{
+		floatTable: floatTable{
+			table: newTable(done, bounds, key, cols, defs, cache, alloc),
+			cur:   cur,
+		},
+		windowEvery: every,
+		ts:          start + (every - start%every),
+	}
+	t.readTags(tags)
+	t.advance()
+
+	return t
+}
+
+// createWindows will create the next set of windows for each interval.
+// The ts parameter is the first interval's stop time.
+func (t *floatCompleteWindowTable) createWindows(ts int64) (next int64, start, stop *array.Int64) {
+	n := int((int64(t.bounds.Stop) - ts) / t.windowEvery)
+	if n > maxWindowBufferSize {
+		n = maxWindowBufferSize
+	}
+
+	stopB := arrow.NewIntBuilder(t.alloc)
+	stopB.Resize(n)
+	for i, ts := 0, ts; i < n; i, ts = i+1, ts+t.windowEvery {
+		if i == n-1 && ts > int64(t.bounds.Stop) {
+			stopB.Append(int64(t.bounds.Stop))
+			continue
+		}
+		stopB.Append(ts)
+		next = ts
+	}
+	stop = stopB.NewInt64Array()
+
+	startB := arrow.NewIntBuilder(t.alloc)
+	startB.Resize(n)
+	for i, ts := 0, ts-t.windowEvery; i < n; i, ts = i+1, ts+t.windowEvery {
+		if i == 0 && ts < int64(t.bounds.Start) {
+			startB.Append(int64(t.bounds.Start))
+			continue
+		}
+		startB.Append(ts)
+	}
+	start = startB.NewInt64Array()
+	return next, start, stop
+}
+
+func (t *floatCompleteWindowTable) nextAt(ts int64) (v float64, ok bool) {
+	if t.i >= len(t.timestamps) && !t.nextBuffer() {
+		return
+	} else if t.timestamps[t.i] != ts {
+		return
+	}
+	v, ok = t.values[t.i], true
+	t.i++
+	return v, ok
+}
+
+func (t *floatCompleteWindowTable) nextBuffer() bool {
+	if t.done {
+		return false
+	}
+
+	a := t.cur.Next()
+	if a.Len() == 0 {
+		t.done = true
+		return false
+	}
+	t.timestamps = a.Timestamps
+	t.values = a.Values
+	t.i = 0
+	return true
+}
+
+func (t *floatCompleteWindowTable) appendValues(intervals []int64, appendValue func(v float64), appendNull func()) {
+	for i := 0; i < len(intervals); i++ {
+		if v, ok := t.nextAt(intervals[i]); ok {
+			appendValue(v)
+			continue
+		}
+		appendNull()
+	}
+}
+
+func (t *floatCompleteWindowTable) advance() bool {
+	if t.ts-t.windowEvery >= int64(t.bounds.Stop) {
+		return false
+	}
+
+	var start, stop *array.Int64
+	t.ts, start, stop = t.createWindows(t.ts)
+
+	for {
+		if len(t.timestamps) == 0 && !t.done {
+			a := t.cur.Next()
+			if a.Len() == 0 {
+				t.done = true
+				break
+			}
+		}
+	}
+	values := t.mergeValues(stop.Int64Values())
+
+	// Retrieve the buffer for the data to avoid allocating
+	// additional slices. If the buffer is still being used
+	// because the references were retained, then we will
+	// allocate a new buffer.
+	cr := t.allocateBuffer(stop.Len())
+	cr.cols[startColIdx] = start
+	cr.cols[stopColIdx] = stop
+	cr.cols[windowedValueColIdx] = values
+	t.appendTags(cr)
 	return true
 }
 
@@ -428,6 +569,146 @@ func (t *integerWindowTable) advance() bool {
 	return true
 }
 
+type integerCompleteWindowTable struct {
+	integerTable
+	windowEvery int64
+	ts          int64
+
+	// Buffered state from the underlying cursor.
+	timestamps []int64
+	values     []int64
+	i          int
+	done       bool
+}
+
+func newIntegerCompleteWindowTable(
+	done chan struct{},
+	cur cursors.IntegerArrayCursor,
+	bounds execute.Bounds,
+	every int64,
+	key flux.GroupKey,
+	cols []flux.ColMeta,
+	tags models.Tags,
+	defs [][]byte,
+	cache *tagsCache,
+	alloc *memory.Allocator,
+) *integerCompleteWindowTable {
+	start := int64(bounds.Start)
+	t := &integerCompleteWindowTable{
+		integerTable: integerTable{
+			table: newTable(done, bounds, key, cols, defs, cache, alloc),
+			cur:   cur,
+		},
+		windowEvery: every,
+		ts:          start + (every - start%every),
+	}
+	t.readTags(tags)
+	t.advance()
+
+	return t
+}
+
+// createWindows will create the next set of windows for each interval.
+// The ts parameter is the first interval's stop time.
+func (t *integerCompleteWindowTable) createWindows(ts int64) (next int64, start, stop *array.Int64) {
+	n := int((int64(t.bounds.Stop) - ts) / t.windowEvery)
+	if n > maxWindowBufferSize {
+		n = maxWindowBufferSize
+	}
+
+	stopB := arrow.NewIntBuilder(t.alloc)
+	stopB.Resize(n)
+	for i, ts := 0, ts; i < n; i, ts = i+1, ts+t.windowEvery {
+		if i == n-1 && ts > int64(t.bounds.Stop) {
+			stopB.Append(int64(t.bounds.Stop))
+			continue
+		}
+		stopB.Append(ts)
+		next = ts
+	}
+	stop = stopB.NewInt64Array()
+
+	startB := arrow.NewIntBuilder(t.alloc)
+	startB.Resize(n)
+	for i, ts := 0, ts-t.windowEvery; i < n; i, ts = i+1, ts+t.windowEvery {
+		if i == 0 && ts < int64(t.bounds.Start) {
+			startB.Append(int64(t.bounds.Start))
+			continue
+		}
+		startB.Append(ts)
+	}
+	start = startB.NewInt64Array()
+	return next, start, stop
+}
+
+func (t *integerCompleteWindowTable) nextAt(ts int64) (v int64, ok bool) {
+	if t.i >= len(t.timestamps) && !t.nextBuffer() {
+		return
+	} else if t.timestamps[t.i] != ts {
+		return
+	}
+	v, ok = t.values[t.i], true
+	t.i++
+	return v, ok
+}
+
+func (t *integerCompleteWindowTable) nextBuffer() bool {
+	if t.done {
+		return false
+	}
+
+	a := t.cur.Next()
+	if a.Len() == 0 {
+		t.done = true
+		return false
+	}
+	t.timestamps = a.Timestamps
+	t.values = a.Values
+	t.i = 0
+	return true
+}
+
+func (t *integerCompleteWindowTable) appendValues(intervals []int64, appendValue func(v int64), appendNull func()) {
+	for i := 0; i < len(intervals); i++ {
+		if v, ok := t.nextAt(intervals[i]); ok {
+			appendValue(v)
+			continue
+		}
+		appendNull()
+	}
+}
+
+func (t *integerCompleteWindowTable) advance() bool {
+	if t.ts-t.windowEvery >= int64(t.bounds.Stop) {
+		return false
+	}
+
+	var start, stop *array.Int64
+	t.ts, start, stop = t.createWindows(t.ts)
+
+	for {
+		if len(t.timestamps) == 0 && !t.done {
+			a := t.cur.Next()
+			if a.Len() == 0 {
+				t.done = true
+				break
+			}
+		}
+	}
+	values := t.mergeValues(stop.Int64Values())
+
+	// Retrieve the buffer for the data to avoid allocating
+	// additional slices. If the buffer is still being used
+	// because the references were retained, then we will
+	// allocate a new buffer.
+	cr := t.allocateBuffer(stop.Len())
+	cr.cols[startColIdx] = start
+	cr.cols[stopColIdx] = stop
+	cr.cols[windowedValueColIdx] = values
+	t.appendTags(cr)
+	return true
+}
+
 // group table
 
 type integerGroupTable struct {
@@ -686,6 +967,146 @@ func (t *unsignedWindowTable) advance() bool {
 	if t.idxInArr == t.arr.Len() {
 		t.arr = nil
 	}
+	return true
+}
+
+type unsignedCompleteWindowTable struct {
+	unsignedTable
+	windowEvery int64
+	ts          int64
+
+	// Buffered state from the underlying cursor.
+	timestamps []int64
+	values     []uint64
+	i          int
+	done       bool
+}
+
+func newUnsignedCompleteWindowTable(
+	done chan struct{},
+	cur cursors.UnsignedArrayCursor,
+	bounds execute.Bounds,
+	every int64,
+	key flux.GroupKey,
+	cols []flux.ColMeta,
+	tags models.Tags,
+	defs [][]byte,
+	cache *tagsCache,
+	alloc *memory.Allocator,
+) *unsignedCompleteWindowTable {
+	start := int64(bounds.Start)
+	t := &unsignedCompleteWindowTable{
+		unsignedTable: unsignedTable{
+			table: newTable(done, bounds, key, cols, defs, cache, alloc),
+			cur:   cur,
+		},
+		windowEvery: every,
+		ts:          start + (every - start%every),
+	}
+	t.readTags(tags)
+	t.advance()
+
+	return t
+}
+
+// createWindows will create the next set of windows for each interval.
+// The ts parameter is the first interval's stop time.
+func (t *unsignedCompleteWindowTable) createWindows(ts int64) (next int64, start, stop *array.Int64) {
+	n := int((int64(t.bounds.Stop) - ts) / t.windowEvery)
+	if n > maxWindowBufferSize {
+		n = maxWindowBufferSize
+	}
+
+	stopB := arrow.NewIntBuilder(t.alloc)
+	stopB.Resize(n)
+	for i, ts := 0, ts; i < n; i, ts = i+1, ts+t.windowEvery {
+		if i == n-1 && ts > int64(t.bounds.Stop) {
+			stopB.Append(int64(t.bounds.Stop))
+			continue
+		}
+		stopB.Append(ts)
+		next = ts
+	}
+	stop = stopB.NewInt64Array()
+
+	startB := arrow.NewIntBuilder(t.alloc)
+	startB.Resize(n)
+	for i, ts := 0, ts-t.windowEvery; i < n; i, ts = i+1, ts+t.windowEvery {
+		if i == 0 && ts < int64(t.bounds.Start) {
+			startB.Append(int64(t.bounds.Start))
+			continue
+		}
+		startB.Append(ts)
+	}
+	start = startB.NewInt64Array()
+	return next, start, stop
+}
+
+func (t *unsignedCompleteWindowTable) nextAt(ts int64) (v uint64, ok bool) {
+	if t.i >= len(t.timestamps) && !t.nextBuffer() {
+		return
+	} else if t.timestamps[t.i] != ts {
+		return
+	}
+	v, ok = t.values[t.i], true
+	t.i++
+	return v, ok
+}
+
+func (t *unsignedCompleteWindowTable) nextBuffer() bool {
+	if t.done {
+		return false
+	}
+
+	a := t.cur.Next()
+	if a.Len() == 0 {
+		t.done = true
+		return false
+	}
+	t.timestamps = a.Timestamps
+	t.values = a.Values
+	t.i = 0
+	return true
+}
+
+func (t *unsignedCompleteWindowTable) appendValues(intervals []int64, appendValue func(v uint64), appendNull func()) {
+	for i := 0; i < len(intervals); i++ {
+		if v, ok := t.nextAt(intervals[i]); ok {
+			appendValue(v)
+			continue
+		}
+		appendNull()
+	}
+}
+
+func (t *unsignedCompleteWindowTable) advance() bool {
+	if t.ts-t.windowEvery >= int64(t.bounds.Stop) {
+		return false
+	}
+
+	var start, stop *array.Int64
+	t.ts, start, stop = t.createWindows(t.ts)
+
+	for {
+		if len(t.timestamps) == 0 && !t.done {
+			a := t.cur.Next()
+			if a.Len() == 0 {
+				t.done = true
+				break
+			}
+		}
+	}
+	values := t.mergeValues(stop.Int64Values())
+
+	// Retrieve the buffer for the data to avoid allocating
+	// additional slices. If the buffer is still being used
+	// because the references were retained, then we will
+	// allocate a new buffer.
+	cr := t.allocateBuffer(stop.Len())
+	cr.cols[startColIdx] = start
+	cr.cols[stopColIdx] = stop
+	cr.cols[windowedValueColIdx] = values
+	t.appendTags(cr)
 	return true
 }
 
@@ -950,6 +1371,146 @@ func (t *stringWindowTable) advance() bool {
 	return true
 }
 
+type stringCompleteWindowTable struct {
+	stringTable
+	windowEvery int64
+	ts          int64
+
+	// Buffered state from the underlying cursor.
+	timestamps []int64
+	values     []string
+	i          int
+	done       bool
+}
+
+func newStringCompleteWindowTable(
+	done chan struct{},
+	cur cursors.StringArrayCursor,
+	bounds execute.Bounds,
+	every int64,
+	key flux.GroupKey,
+	cols []flux.ColMeta,
+	tags models.Tags,
+	defs [][]byte,
+	cache *tagsCache,
+	alloc *memory.Allocator,
+) *stringCompleteWindowTable {
+	start := int64(bounds.Start)
+	t := &stringCompleteWindowTable{
+		stringTable: stringTable{
+			table: newTable(done, bounds, key, cols, defs, cache, alloc),
+			cur:   cur,
+		},
+		windowEvery: every,
+		ts:          start + (every - start%every),
+	}
+	t.readTags(tags)
+	t.advance()
+
+	return t
+}
+
+// createWindows will create the next set of windows for each interval.
+// The ts parameter is the first interval's stop time.
+func (t *stringCompleteWindowTable) createWindows(ts int64) (next int64, start, stop *array.Int64) {
+	n := int((int64(t.bounds.Stop) - ts) / t.windowEvery)
+	if n > maxWindowBufferSize {
+		n = maxWindowBufferSize
+	}
+
+	stopB := arrow.NewIntBuilder(t.alloc)
+	stopB.Resize(n)
+	for i, ts := 0, ts; i < n; i, ts = i+1, ts+t.windowEvery {
+		if i == n-1 && ts > int64(t.bounds.Stop) {
+			stopB.Append(int64(t.bounds.Stop))
+			continue
+		}
+		stopB.Append(ts)
+		next = ts
+	}
+	stop = stopB.NewInt64Array()
+
+	startB := arrow.NewIntBuilder(t.alloc)
+	startB.Resize(n)
+	for i, ts := 0, ts-t.windowEvery; i < n; i, ts = i+1, ts+t.windowEvery {
+		if i == 0 && ts < int64(t.bounds.Start) {
+			startB.Append(int64(t.bounds.Start))
+			continue
+		}
+		startB.Append(ts)
+	}
+	start = startB.NewInt64Array()
+	return next, start, stop
+}
+
+func (t *stringCompleteWindowTable) nextAt(ts int64) (v string, ok bool) {
+	if t.i >= len(t.timestamps) && !t.nextBuffer() {
+		return
+	} else if t.timestamps[t.i] != ts {
+		return
+	}
+	v, ok = t.values[t.i], true
+	t.i++
+	return v, ok
+}
+
+func (t *stringCompleteWindowTable) nextBuffer() bool {
+	if t.done {
+		return false
+	}
+
+	a := t.cur.Next()
+	if a.Len() == 0 {
+		t.done = true
+		return false
+	}
+	t.timestamps = a.Timestamps
+	t.values = a.Values
+	t.i = 0
+	return true
+}
+
+func (t *stringCompleteWindowTable) appendValues(intervals []int64, appendValue func(v string), appendNull func()) {
+	for i := 0; i < len(intervals); i++ {
+		if v, ok := t.nextAt(intervals[i]); ok {
+			appendValue(v)
+			continue
+		}
+		appendNull()
+	}
+}
+
+func (t *stringCompleteWindowTable) advance() bool {
+	if t.ts-t.windowEvery >= int64(t.bounds.Stop) {
+		return false
+	}
+
+	var start, stop *array.Int64
+	t.ts, start, stop = t.createWindows(t.ts)
+
+	for {
+		if len(t.timestamps) == 0 && !t.done {
+			a := t.cur.Next()
+			if a.Len() == 0 {
+				t.done = true
+				break
+			}
+		}
+	}
+	values := t.mergeValues(stop.Int64Values())
+
+	// Retrieve the buffer for the data to avoid allocating
+	// additional slices. If the buffer is still being used
+	// because the references were retained, then we will
+	// allocate a new buffer.
+	cr := t.allocateBuffer(stop.Len())
+	cr.cols[startColIdx] = start
+	cr.cols[stopColIdx] = stop
+	cr.cols[windowedValueColIdx] = values
+	t.appendTags(cr)
+	return true
+}
+
 // group table
 
 type stringGroupTable struct {
@@ -1208,6 +1769,146 @@ func (t *booleanWindowTable) advance() bool {
 	if t.idxInArr == t.arr.Len() {
 		t.arr = nil
 	}
+	return true
+}
+
+type booleanCompleteWindowTable struct {
+	booleanTable
+	windowEvery int64
+	ts          int64
+
+	// Buffered state from the underlying cursor.
+	timestamps []int64
+	values     []bool
+	i          int
+	done       bool
+}
+
+func newBooleanCompleteWindowTable(
+	done chan struct{},
+	cur cursors.BooleanArrayCursor,
+	bounds execute.Bounds,
+	every int64,
+	key flux.GroupKey,
+	cols []flux.ColMeta,
+	tags models.Tags,
+	defs [][]byte,
+	cache *tagsCache,
+	alloc *memory.Allocator,
+) *booleanCompleteWindowTable {
+	start := int64(bounds.Start)
+	t := &booleanCompleteWindowTable{
+		booleanTable: booleanTable{
+			table: newTable(done, bounds, key, cols, defs, cache, alloc),
+			cur:   cur,
+		},
+		windowEvery: every,
+		ts:          start + (every - start%every),
+	}
+	t.readTags(tags)
+	t.advance()
+
+	return t
+}
+
+// createWindows will create the next set of windows for each interval.
+// The ts parameter is the first interval's stop time.
+func (t *booleanCompleteWindowTable) createWindows(ts int64) (next int64, start, stop *array.Int64) {
+	n := int((int64(t.bounds.Stop) - ts) / t.windowEvery)
+	if n > maxWindowBufferSize {
+		n = maxWindowBufferSize
+	}
+
+	stopB := arrow.NewIntBuilder(t.alloc)
+	stopB.Resize(n)
+	for i, ts := 0, ts; i < n; i, ts = i+1, ts+t.windowEvery {
+		if i == n-1 && ts > int64(t.bounds.Stop) {
+			stopB.Append(int64(t.bounds.Stop))
+			continue
+		}
+		stopB.Append(ts)
+		next = ts
+	}
+	stop = stopB.NewInt64Array()
+
+	startB := arrow.NewIntBuilder(t.alloc)
+	startB.Resize(n)
+	for i, ts := 0, ts-t.windowEvery; i < n; i, ts = i+1, ts+t.windowEvery {
+		if i == 0 && ts < int64(t.bounds.Start) {
+			startB.Append(int64(t.bounds.Start))
+			continue
+		}
+		startB.Append(ts)
+	}
+	start = startB.NewInt64Array()
+	return next, start, stop
+}
+
+func (t *booleanCompleteWindowTable) nextAt(ts int64) (v bool, ok bool) {
+	if t.i >= len(t.timestamps) && !t.nextBuffer() {
+		return
+	} else if t.timestamps[t.i] != ts {
+		return
+	}
+	v, ok = t.values[t.i], true
+	t.i++
+	return v, ok
+}
+
+func (t *booleanCompleteWindowTable) nextBuffer() bool {
+	if t.done {
+		return false
+	}
+
+	a := t.cur.Next()
+	if a.Len() == 0 {
+		t.done = true
+		return false
+	}
+	t.timestamps = a.Timestamps
+	t.values = a.Values
+	t.i = 0
+	return true
+}
+
+func (t *booleanCompleteWindowTable) appendValues(intervals []int64, appendValue func(v bool), appendNull func()) {
+	for i := 0; i < len(intervals); i++ {
+		if v, ok := t.nextAt(intervals[i]); ok {
+			appendValue(v)
+			continue
+		}
+		appendNull()
+	}
+}
+
+func (t *booleanCompleteWindowTable) advance() bool {
+	if t.ts-t.windowEvery >= int64(t.bounds.Stop) {
+		return false
+	}
+
+	var start, stop *array.Int64
+	t.ts, start, stop = t.createWindows(t.ts)
+
+	for {
+		if len(t.timestamps) == 0 && !t.done {
+			a := t.cur.Next()
+			if a.Len() == 0 {
+				t.done = true
+				break
+			}
+		}
+	}
+	values := t.mergeValues(stop.Int64Values())
+
+	// Retrieve the buffer for the data to avoid allocating
+	// additional slices. If the buffer is still being used
+	// because the references were retained, then we will
+	// allocate a new buffer.
+	cr := t.allocateBuffer(stop.Len())
+	cr.cols[startColIdx] = start
+	cr.cols[stopColIdx] = stop
+	cr.cols[windowedValueColIdx] = values
+	t.appendTags(cr)
 	return true
 }
 
