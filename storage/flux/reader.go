@@ -541,6 +541,21 @@ func groupKeyForGroup(kv [][]byte, spec *query.ReadGroupSpec, bnds execute.Bound
 	return execute.NewGroupKey(cols, vs)
 }
 
+func groupKeyForWindow(key flux.GroupKey, start, stop int64) flux.GroupKey {
+	cols := key.Cols()
+	vs := make([]values.Value, len(cols))
+	for j, c := range cols {
+		if c.Label == execute.DefaultStartColLabel {
+			vs[j] = values.NewTime(values.Time(start))
+		} else if c.Label == execute.DefaultStopColLabel {
+			vs[j] = values.NewTime(values.Time(stop))
+		} else {
+			vs[j] = key.Value(j)
+		}
+	}
+	return execute.NewGroupKey(cols, vs)
+}
+
 type windowAggregateIterator struct {
 	ctx   context.Context
 	s     storage.Store

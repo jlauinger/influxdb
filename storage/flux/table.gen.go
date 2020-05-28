@@ -141,14 +141,14 @@ func newFloatWindowTable(
 
 // createNextWindow will read the timestamps from the array
 // cursor and construct the values for the next window.
-func (t *floatWindowTable) createNextWindow() (start, stop *array.Int64, ok bool) {
+func (t *floatWindowTable) createNextWindow() (key flux.GroupKey, start, stop *array.Int64, ok bool) {
 	var stopT int64
 	if t.createEmpty {
 		stopT = t.nextTS
 		t.nextTS += t.windowEvery
 	} else {
 		if !t.nextBuffer() {
-			return nil, nil, false
+			return nil, nil, nil, false
 		}
 		stopT = t.arr.Timestamps[t.idxInArr]
 	}
@@ -165,11 +165,12 @@ func (t *floatWindowTable) createNextWindow() (start, stop *array.Int64, ok bool
 	// If the start time is after our stop boundary,
 	// we exit here when create empty is true.
 	if t.createEmpty && startT >= int64(t.bounds.Stop) {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
+	key = groupKeyForWindow(t.key, startT, stopT)
 	start = arrow.NewInt([]int64{startT}, t.alloc)
 	stop = arrow.NewInt([]int64{stopT}, t.alloc)
-	return start, stop, true
+	return key, start, stop, true
 }
 
 // nextAt will retrieve the next value that can be used with
@@ -219,7 +220,7 @@ func (t *floatWindowTable) appendValues(intervals []int64, appendValue func(v fl
 
 func (t *floatWindowTable) advance() bool {
 	// Create the timestamps for the next window.
-	start, stop, ok := t.createNextWindow()
+	key, start, stop, ok := t.createNextWindow()
 	if !ok {
 		return false
 	}
@@ -230,6 +231,7 @@ func (t *floatWindowTable) advance() bool {
 	// because the references were retained, then we will
 	// allocate a new buffer.
 	cr := t.allocateBuffer(stop.Len())
+	cr.key = key
 	cr.cols[startColIdx] = start
 	cr.cols[stopColIdx] = stop
 	cr.cols[windowedValueColIdx] = values
@@ -585,14 +587,14 @@ func newIntegerWindowTable(
 
 // createNextWindow will read the timestamps from the array
 // cursor and construct the values for the next window.
-func (t *integerWindowTable) createNextWindow() (start, stop *array.Int64, ok bool) {
+func (t *integerWindowTable) createNextWindow() (key flux.GroupKey, start, stop *array.Int64, ok bool) {
 	var stopT int64
 	if t.createEmpty {
 		stopT = t.nextTS
 		t.nextTS += t.windowEvery
 	} else {
 		if !t.nextBuffer() {
-			return nil, nil, false
+			return nil, nil, nil, false
 		}
 		stopT = t.arr.Timestamps[t.idxInArr]
 	}
@@ -609,11 +611,12 @@ func (t *integerWindowTable) createNextWindow() (start, stop *array.Int64, ok bo
 	// If the start time is after our stop boundary,
 	// we exit here when create empty is true.
 	if t.createEmpty && startT >= int64(t.bounds.Stop) {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
+	key = groupKeyForWindow(t.key, startT, stopT)
 	start = arrow.NewInt([]int64{startT}, t.alloc)
 	stop = arrow.NewInt([]int64{stopT}, t.alloc)
-	return start, stop, true
+	return key, start, stop, true
 }
 
 // nextAt will retrieve the next value that can be used with
@@ -663,7 +666,7 @@ func (t *integerWindowTable) appendValues(intervals []int64, appendValue func(v 
 
 func (t *integerWindowTable) advance() bool {
 	// Create the timestamps for the next window.
-	start, stop, ok := t.createNextWindow()
+	key, start, stop, ok := t.createNextWindow()
 	if !ok {
 		return false
 	}
@@ -674,6 +677,7 @@ func (t *integerWindowTable) advance() bool {
 	// because the references were retained, then we will
 	// allocate a new buffer.
 	cr := t.allocateBuffer(stop.Len())
+	cr.key = key
 	cr.cols[startColIdx] = start
 	cr.cols[stopColIdx] = stop
 	cr.cols[windowedValueColIdx] = values
@@ -1029,14 +1033,14 @@ func newUnsignedWindowTable(
 
 // createNextWindow will read the timestamps from the array
 // cursor and construct the values for the next window.
-func (t *unsignedWindowTable) createNextWindow() (start, stop *array.Int64, ok bool) {
+func (t *unsignedWindowTable) createNextWindow() (key flux.GroupKey, start, stop *array.Int64, ok bool) {
 	var stopT int64
 	if t.createEmpty {
 		stopT = t.nextTS
 		t.nextTS += t.windowEvery
 	} else {
 		if !t.nextBuffer() {
-			return nil, nil, false
+			return nil, nil, nil, false
 		}
 		stopT = t.arr.Timestamps[t.idxInArr]
 	}
@@ -1053,11 +1057,12 @@ func (t *unsignedWindowTable) createNextWindow() (start, stop *array.Int64, ok b
 	// If the start time is after our stop boundary,
 	// we exit here when create empty is true.
 	if t.createEmpty && startT >= int64(t.bounds.Stop) {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
+	key = groupKeyForWindow(t.key, startT, stopT)
 	start = arrow.NewInt([]int64{startT}, t.alloc)
 	stop = arrow.NewInt([]int64{stopT}, t.alloc)
-	return start, stop, true
+	return key, start, stop, true
 }
 
 // nextAt will retrieve the next value that can be used with
@@ -1107,7 +1112,7 @@ func (t *unsignedWindowTable) appendValues(intervals []int64, appendValue func(v
 
 func (t *unsignedWindowTable) advance() bool {
 	// Create the timestamps for the next window.
-	start, stop, ok := t.createNextWindow()
+	key, start, stop, ok := t.createNextWindow()
 	if !ok {
 		return false
 	}
@@ -1118,6 +1123,7 @@ func (t *unsignedWindowTable) advance() bool {
 	// because the references were retained, then we will
 	// allocate a new buffer.
 	cr := t.allocateBuffer(stop.Len())
+	cr.key = key
 	cr.cols[startColIdx] = start
 	cr.cols[stopColIdx] = stop
 	cr.cols[windowedValueColIdx] = values
@@ -1473,14 +1479,14 @@ func newStringWindowTable(
 
 // createNextWindow will read the timestamps from the array
 // cursor and construct the values for the next window.
-func (t *stringWindowTable) createNextWindow() (start, stop *array.Int64, ok bool) {
+func (t *stringWindowTable) createNextWindow() (key flux.GroupKey, start, stop *array.Int64, ok bool) {
 	var stopT int64
 	if t.createEmpty {
 		stopT = t.nextTS
 		t.nextTS += t.windowEvery
 	} else {
 		if !t.nextBuffer() {
-			return nil, nil, false
+			return nil, nil, nil, false
 		}
 		stopT = t.arr.Timestamps[t.idxInArr]
 	}
@@ -1497,11 +1503,12 @@ func (t *stringWindowTable) createNextWindow() (start, stop *array.Int64, ok boo
 	// If the start time is after our stop boundary,
 	// we exit here when create empty is true.
 	if t.createEmpty && startT >= int64(t.bounds.Stop) {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
+	key = groupKeyForWindow(t.key, startT, stopT)
 	start = arrow.NewInt([]int64{startT}, t.alloc)
 	stop = arrow.NewInt([]int64{stopT}, t.alloc)
-	return start, stop, true
+	return key, start, stop, true
 }
 
 // nextAt will retrieve the next value that can be used with
@@ -1551,7 +1558,7 @@ func (t *stringWindowTable) appendValues(intervals []int64, appendValue func(v s
 
 func (t *stringWindowTable) advance() bool {
 	// Create the timestamps for the next window.
-	start, stop, ok := t.createNextWindow()
+	key, start, stop, ok := t.createNextWindow()
 	if !ok {
 		return false
 	}
@@ -1562,6 +1569,7 @@ func (t *stringWindowTable) advance() bool {
 	// because the references were retained, then we will
 	// allocate a new buffer.
 	cr := t.allocateBuffer(stop.Len())
+	cr.key = key
 	cr.cols[startColIdx] = start
 	cr.cols[stopColIdx] = stop
 	cr.cols[windowedValueColIdx] = values
@@ -1917,14 +1925,14 @@ func newBooleanWindowTable(
 
 // createNextWindow will read the timestamps from the array
 // cursor and construct the values for the next window.
-func (t *booleanWindowTable) createNextWindow() (start, stop *array.Int64, ok bool) {
+func (t *booleanWindowTable) createNextWindow() (key flux.GroupKey, start, stop *array.Int64, ok bool) {
 	var stopT int64
 	if t.createEmpty {
 		stopT = t.nextTS
 		t.nextTS += t.windowEvery
 	} else {
 		if !t.nextBuffer() {
-			return nil, nil, false
+			return nil, nil, nil, false
 		}
 		stopT = t.arr.Timestamps[t.idxInArr]
 	}
@@ -1941,11 +1949,12 @@ func (t *booleanWindowTable) createNextWindow() (start, stop *array.Int64, ok bo
 	// If the start time is after our stop boundary,
 	// we exit here when create empty is true.
 	if t.createEmpty && startT >= int64(t.bounds.Stop) {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
+	key = groupKeyForWindow(t.key, startT, stopT)
 	start = arrow.NewInt([]int64{startT}, t.alloc)
 	stop = arrow.NewInt([]int64{stopT}, t.alloc)
-	return start, stop, true
+	return key, start, stop, true
 }
 
 // nextAt will retrieve the next value that can be used with
@@ -1995,7 +2004,7 @@ func (t *booleanWindowTable) appendValues(intervals []int64, appendValue func(v 
 
 func (t *booleanWindowTable) advance() bool {
 	// Create the timestamps for the next window.
-	start, stop, ok := t.createNextWindow()
+	key, start, stop, ok := t.createNextWindow()
 	if !ok {
 		return false
 	}
@@ -2006,6 +2015,7 @@ func (t *booleanWindowTable) advance() bool {
 	// because the references were retained, then we will
 	// allocate a new buffer.
 	cr := t.allocateBuffer(stop.Len())
+	cr.key = key
 	cr.cols[startColIdx] = start
 	cr.cols[stopColIdx] = stop
 	cr.cols[windowedValueColIdx] = values
