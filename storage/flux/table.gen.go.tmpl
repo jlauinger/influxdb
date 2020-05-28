@@ -107,6 +107,7 @@ func new{{.Name}}WindowTable(
 	cur cursors.{{.Name}}ArrayCursor,
 	bounds execute.Bounds,
 	every int64,
+	createEmpty bool,
 	key flux.GroupKey,
 	cols []flux.ColMeta,
 	tags models.Tags,
@@ -120,6 +121,11 @@ func new{{.Name}}WindowTable(
 			cur:   cur,
 		},
 		windowEvery: every,
+		createEmpty: createEmpty,
+	}
+	if t.createEmpty {
+		start := int64(bounds.Start)
+		t.nextTS = start + (every - start % every)
 	}
 	t.readTags(tags)
 	t.advance()
@@ -129,9 +135,19 @@ func new{{.Name}}WindowTable(
 
 // createNextWindow will read the timestamps from the array
 // cursor and construct the values for the next window.
-func (t *{{.name}}WindowTable) createNextWindow() (start, stop *array.Int64) {
+func (t *{{.name}}WindowTable) createNextWindow() (start, stop *array.Int64, ok bool) {
+	var stopT int64
+	if t.createEmpty {
+		stopT = t.nextTS
+		t.nextTS += t.windowEvery
+	} else {
+		if !t.nextBuffer() {
+			return nil, nil, false
+		}
+		stopT = t.arr.Timestamps[t.idxInArr]
+	}
+
 	// Regain the window start time from the window end time.
-	stopT := t.arr.Timestamps[t.idxInArr]
 	startT := stopT - t.windowEvery
 	if startT < int64(t.bounds.Start) {
 		startT = int64(t.bounds.Start)
@@ -139,9 +155,15 @@ func (t *{{.name}}WindowTable) createNextWindow() (start, stop *array.Int64) {
 	if stopT > int64(t.bounds.Stop) {
 		stopT = int64(t.bounds.Stop)
 	}
+
+	// If the start time is after our stop boundary,
+	// we exit here when create empty is true.
+	if t.createEmpty && startT >= int64(t.bounds.Stop) {
+		return nil, nil, false
+	}
 	start = arrow.NewInt([]int64{startT}, t.alloc)
 	stop = arrow.NewInt([]int64{stopT}, t.alloc)
-	return start, stop
+	return start, stop, true
 }
 
 // nextAt will retrieve the next value that can be used with
@@ -190,12 +212,11 @@ func (t *{{.name}}WindowTable) appendValues(intervals []int64, appendValue func(
 }
 
 func (t *{{.name}}WindowTable) advance() bool {
-	if !t.nextBuffer() {
+	// Create the timestamps for the next window.
+	start, stop, ok := t.createNextWindow()
+	if !ok {
 		return false
 	}
-
-	// Create the timestamps for the next window.
-	start, stop := t.createNextWindow()
 	values := t.mergeValues(stop.Int64Values())
 
 	// Retrieve the buffer for the data to avoid allocating
