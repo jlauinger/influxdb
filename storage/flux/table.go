@@ -224,7 +224,7 @@ func (t *floatTable) toArrowBuffer(vs []float64) *array.Float64 {
 func (t *floatGroupTable) toArrowBuffer(vs []float64) *array.Float64 {
 	return arrow.NewFloat(vs, t.alloc)
 }
-func (t *floatCompleteWindowTable) mergeValues(intervals []int64) *array.Float64 {
+func (t *floatWindowTable) mergeValues(intervals []int64) *array.Float64 {
 	b := arrow.NewFloatBuilder(t.alloc)
 	b.Resize(len(intervals))
 	t.appendValues(intervals, b.Append, b.AppendNull)
@@ -236,7 +236,7 @@ func (t *integerTable) toArrowBuffer(vs []int64) *array.Int64 {
 func (t *integerGroupTable) toArrowBuffer(vs []int64) *array.Int64 {
 	return arrow.NewInt(vs, t.alloc)
 }
-func (t *integerCompleteWindowTable) mergeValues(intervals []int64) *array.Int64 {
+func (t *integerWindowTable) mergeValues(intervals []int64) *array.Int64 {
 	b := arrow.NewIntBuilder(t.alloc)
 	b.Resize(len(intervals))
 	t.appendValues(intervals, b.Append, b.AppendNull)
@@ -248,7 +248,7 @@ func (t *unsignedTable) toArrowBuffer(vs []uint64) *array.Uint64 {
 func (t *unsignedGroupTable) toArrowBuffer(vs []uint64) *array.Uint64 {
 	return arrow.NewUint(vs, t.alloc)
 }
-func (t *unsignedCompleteWindowTable) mergeValues(intervals []int64) *array.Uint64 {
+func (t *unsignedWindowTable) mergeValues(intervals []int64) *array.Uint64 {
 	b := arrow.NewUintBuilder(t.alloc)
 	b.Resize(len(intervals))
 	t.appendValues(intervals, b.Append, b.AppendNull)
@@ -260,7 +260,7 @@ func (t *stringTable) toArrowBuffer(vs []string) *array.Binary {
 func (t *stringGroupTable) toArrowBuffer(vs []string) *array.Binary {
 	return arrow.NewString(vs, t.alloc)
 }
-func (t *stringCompleteWindowTable) mergeValues(intervals []int64) *array.Binary {
+func (t *stringWindowTable) mergeValues(intervals []int64) *array.Binary {
 	b := arrow.NewStringBuilder(t.alloc)
 	b.Resize(len(intervals))
 	t.appendValues(intervals, b.AppendString, b.AppendNull)
@@ -272,7 +272,7 @@ func (t *booleanTable) toArrowBuffer(vs []bool) *array.Boolean {
 func (t *booleanGroupTable) toArrowBuffer(vs []bool) *array.Boolean {
 	return arrow.NewBool(vs, t.alloc)
 }
-func (t *booleanCompleteWindowTable) mergeValues(intervals []int64) *array.Boolean {
+func (t *booleanWindowTable) mergeValues(intervals []int64) *array.Boolean {
 	b := arrow.NewBoolBuilder(t.alloc)
 	b.Resize(len(intervals))
 	t.appendValues(intervals, b.Append, b.AppendNull)
