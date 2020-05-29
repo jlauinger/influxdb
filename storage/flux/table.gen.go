@@ -139,6 +139,10 @@ func newFloatWindowTable(
 	return t
 }
 
+func (t *floatWindowTable) Do(f func(flux.ColReader) error) error {
+	return t.do(f, t.advance)
+}
+
 // createNextWindow will read the timestamps from the array
 // cursor and construct the values for the next window.
 func (t *floatWindowTable) createNextWindow() (key flux.GroupKey, start, stop *array.Int64, ok bool) {
@@ -469,6 +473,10 @@ func newIntegerWindowTable(
 	t.advance()
 
 	return t
+}
+
+func (t *integerWindowTable) Do(f func(flux.ColReader) error) error {
+	return t.do(f, t.advance)
 }
 
 // createNextWindow will read the timestamps from the array
@@ -803,6 +811,10 @@ func newUnsignedWindowTable(
 	return t
 }
 
+func (t *unsignedWindowTable) Do(f func(flux.ColReader) error) error {
+	return t.do(f, t.advance)
+}
+
 // createNextWindow will read the timestamps from the array
 // cursor and construct the values for the next window.
 func (t *unsignedWindowTable) createNextWindow() (key flux.GroupKey, start, stop *array.Int64, ok bool) {
@@ -1135,6 +1147,10 @@ func newStringWindowTable(
 	return t
 }
 
+func (t *stringWindowTable) Do(f func(flux.ColReader) error) error {
+	return t.do(f, t.advance)
+}
+
 // createNextWindow will read the timestamps from the array
 // cursor and construct the values for the next window.
 func (t *stringWindowTable) createNextWindow() (key flux.GroupKey, start, stop *array.Int64, ok bool) {
@@ -1465,6 +1481,10 @@ func newBooleanWindowTable(
 	t.advance()
 
 	return t
+}
+
+func (t *booleanWindowTable) Do(f func(flux.ColReader) error) error {
+	return t.do(f, t.advance)
 }
 
 // createNextWindow will read the timestamps from the array

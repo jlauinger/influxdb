@@ -133,6 +133,10 @@ func new{{.Name}}WindowTable(
 	return t
 }
 
+func (t *{{.name}}WindowTable) Do(f func(flux.ColReader) error) error {
+	return t.do(f, t.advance)
+}
+
 // createNextWindow will read the timestamps from the array
 // cursor and construct the values for the next window.
 func (t *{{.name}}WindowTable) createNextWindow() (key flux.GroupKey, start, stop *array.Int64, ok bool) {

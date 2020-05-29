@@ -10,10 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/influxdata/flux"
 	"github.com/influxdata/flux/execute"
 	"github.com/influxdata/flux/execute/executetest"
 	"github.com/influxdata/flux/memory"
+	"github.com/influxdata/flux/plan"
+	"github.com/influxdata/flux/stdlib/universe"
 	"github.com/influxdata/flux/values"
 	"github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/cmd/influxd/generate"
@@ -81,14 +84,61 @@ func (r *StorageReader) ReadWindowAggregate(ctx context.Context, spec query.Read
 
 func TestStorageReader_ReadWindowAggregate(t *testing.T) {
 	reader := NewStorageReader(t, func(org, bucket influxdb.ID) (gen.SeriesGenerator, gen.TimeRange) {
-		// generate a consistent output using the generator api
-		// use this generator instead of the random one used by the benchmark.
-		// gen.NewFloatArrayValuesSequence()
-		panic("implement me")
+		tagsSpec := &gen.TagsSpec{
+			Tags: []*gen.TagValuesSpec{
+				{
+					TagKey: "t0",
+					Values: func() gen.CountableSequence {
+						return gen.NewCounterByteSequence("a-%s", 0, 3)
+					},
+				},
+			},
+		}
+		spec := gen.Spec{
+			OrgID:    org,
+			BucketID: bucket,
+			Measurements: []gen.MeasurementSpec{
+				{
+					Name:     "m0",
+					TagsSpec: tagsSpec,
+					FieldValuesSpec: &gen.FieldValuesSpec{
+						Name: "f0",
+						TimeSequenceSpec: gen.TimeSequenceSpec{
+							Count: math.MaxInt32,
+							Delta: 10 * time.Second,
+						},
+						DataType: models.Float,
+						Values: func(spec gen.TimeSequenceSpec) gen.TimeValuesSequence {
+							return gen.NewTimeFloatValuesSequence(
+								spec.Count,
+								gen.NewTimestampSequenceFromSpec(spec),
+								gen.NewFloatArrayValuesSequence([]float64{1.0, 2.0, 3.0, 4.0}),
+							)
+						},
+					},
+				},
+			},
+		}
+		tr := gen.TimeRange{
+			Start: mustParseTime("2019-11-25T00:00:00Z"),
+			End:   mustParseTime("2019-11-25T00:02:00Z"),
+		}
+		return gen.NewSeriesGeneratorFromSpec(&spec, tr), tr
 	})
+	defer reader.Close()
 
 	mem := &memory.Allocator{}
-	ti, err := reader.ReadWindowAggregate(context.Background(), query.ReadWindowAggregateSpec{}, mem)
+	ti, err := reader.ReadWindowAggregate(context.Background(), query.ReadWindowAggregateSpec{
+		ReadFilterSpec: query.ReadFilterSpec{
+			OrganizationID: reader.Org,
+			BucketID:       reader.Bucket,
+			Bounds:         reader.Bounds,
+		},
+		WindowEvery: int64(30 * time.Second),
+		Aggregates: []plan.ProcedureKind{
+			universe.CountKind,
+		},
+	}, mem)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +148,7 @@ func TestStorageReader_ReadWindowAggregate(t *testing.T) {
 	})
 	want.Normalize()
 
-	gotTables := []*executetest.Table{}
+	var gotTables []*executetest.Table
 	if err := ti.Do(func(table flux.Table) error {
 		t, err := executetest.ConvertTable(table)
 		if err != nil {
@@ -114,27 +164,9 @@ func TestStorageReader_ReadWindowAggregate(t *testing.T) {
 	got.Normalize()
 
 	// compare these two
-
-	// logger := zaptest.NewLogger(b)
-	// rootDir, err := ioutil.TempDir("", "storage-reads-test")
-	// if err != nil {
-	// 	b.Fatal(err)
-	// }
-	// defer func() { _ = os.RemoveAll(rootDir) }()
-	//
-	// generator := generate.Generator{}
-	// if _, err := generator.Run(context.Background(), rootDir, sg); err != nil {
-	// 	b.Fatal(err)
-	// }
-	//
-	// enginePath := filepath.Join(rootDir, "engine")
-	// engine := storage.NewEngine(enginePath, storage.NewConfig())
-	// engine.WithLogger(logger)
-	//
-	// if err := engine.Open(context.Background()); err != nil {
-	// 	b.Fatal(err)
-	// }
-	// reader := storageflux.NewReader(readservice.NewStore(engine))
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("unexpected results -want/+got:\n%s", diff)
+	}
 }
 
 func BenchmarkReadFilter(b *testing.B) {
@@ -144,13 +176,13 @@ func BenchmarkReadFilter(b *testing.B) {
 				{
 					TagKey: "t0",
 					Values: func() gen.CountableSequence {
-						return gen.NewCounterByteSequence("a-%d", 0, 5)
+						return gen.NewCounterByteSequence("a-%s", 0, 5)
 					},
 				},
 				{
 					TagKey: "t1",
 					Values: func() gen.CountableSequence {
-						return gen.NewCounterByteSequence("b-%d", 0, 1000)
+						return gen.NewCounterByteSequence("b-%s", 0, 1000)
 					},
 				},
 			},
